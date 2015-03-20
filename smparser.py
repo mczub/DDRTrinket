@@ -6,6 +6,9 @@ import pygame
 import threading
 import sys
 import os
+import RPi.GPIO as GPIO
+from bibliopixel.led import *
+from bibliopixel.drivers.LPD8806 import *
 
 def convertSteps(steps, bpm, bpmChanges, freezes, gap, stepIndex, holdIndex):
 #takes in all these params, returns back a dictionary with: key = offset (in milliseconds) and value = a list of function objects to be called
@@ -50,6 +53,8 @@ def convertSteps(steps, bpm, bpmChanges, freezes, gap, stepIndex, holdIndex):
     try:
       if (nextIsHold):
         #print prevOffset
+        for press in stepIndex[c]:
+          mySteps[prevOffset].remove(press)
         mySteps[prevOffset].extend(holdIndex[c])
         nextIsHold = False
         #print mySteps[prevOffset]
@@ -73,15 +78,26 @@ class Pad(object):
   def __repr__(self):
     return self.__pad
   def __str__(self):
-    return self.__pad
+    return str(self.__pad)
   def Press(self):
+    global strip
     if (not self.__isHeld):
-      print 'press ' + self.__pad
+      print 'press ' + str(self.__pad)
+      strip.set(self.__pad, (100,100,100))
+      strip.update()
+      time.sleep(0.02)
+      strip.set(self.__pad, (0,0,0))
+      strip.update()
     else:
-      print 'release ' + self.__pad
+      print 'release ' + str(self.__pad)
+      strip.set(self.__pad, (0,0,0))
+      strip.update()
       self.__isHeld = False
   def Hold(self):
-    print 'started hold ' + self.__pad
+    global strip
+    print 'started hold ' + str(self.__pad)
+    strip.set(self.__pad, (100,100,100))
+    strip.update()
     self.__isHeld = True
 
 def getTitle(dwiFile):
@@ -143,10 +159,10 @@ def getFreezes(dwiFile):
 
 
 def run(name, s):
-  d = Pad('D')
-  u = Pad('U')
-  l = Pad('L')
-  r = Pad('R')
+  d = Pad(1)
+  u = Pad(2)
+  l = Pad(0)
+  r = Pad(3)
 
   stepIndex = {
     '1' : [d.Press, l.Press],
@@ -205,11 +221,21 @@ def run(name, s):
   while not pygame.mixer.music.get_busy():
     pygame.mixer.music.play()
   pygame.mixer.music.rewind()
+  arrows.daemon = True
   arrows.start()
   
 def clearQueue(s):
   for e in s.queue:
     s.cancel(e)
+
+def nextSong(channel):
+  global curSong
+  global songNames
+  global s
+  curSong += 1
+  curSong %= len(songNames)
+  print 'playing ' + songNames[curSong]
+  run(songNames[curSong],s)
 #run("Healing Vision (Angelic mix)")
 END_MUSIC_EVENT = pygame.USEREVENT + 0
 s = sched.scheduler(time.time, time.sleep)
@@ -228,35 +254,39 @@ songNames = sorted(list(set(dwiNames) & set(mp3Names)))
 #print songNames
 curSong = 0
 paused = False
+GPIO.setmode(GPIO.BCM)
+GPIO.setup(4, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+GPIO.add_event_detect(4, GPIO.FALLING, callback=nextSong, bouncetime=500)
+driver = DriverLPD8806(4)
+strip = LEDStrip(driver)
+strip.fill((0,0,0))
 pygame.init()
-pygame.display.set_mode((1,1))
+#pygame.display.set_mode((1,1))
 pygame.mixer.init()
 pygame.mixer.music.set_endevent(END_MUSIC_EVENT)
 eventloop = True
 while eventloop:
-  pygame.time.Clock().tick(30)
-  paused = False
-  for event in pygame.event.get():
-    if event.type == END_MUSIC_EVENT:
+  try:  
+    pygame.time.Clock().tick(30)
+    paused = False
+    for event in pygame.event.get():
+      if event.type == END_MUSIC_EVENT:
+        nextSong(0)
+    keydown = raw_input()
+    keydown = keydown.lower()
+    buttonstate = GPIO.input(4)
+    if "n" in keydown:
       curSong += 1
       curSong %= len(songNames)
       print 'playing ' + songNames[curSong]
       run(songNames[curSong],s)
-    if event.type == pygame.QUIT:
+    elif "s" in keydown:
+      pygame.mixer.music.stop()
+      clearQueue(s)
+    elif buttonstate == False:
+      print 'playing ' + songNames[curSong]
+      run(songNames[curSong],s)
+  except (KeyboardInterrupt, SystemExit):
       eventloop = False
-    elif event.type == pygame.KEYDOWN:
-      if event.key == pygame.K_ESCAPE:
-        eventloop = False
-      if event.key == pygame.K_n:
-        curSong += 1
-        curSong %= len(songNames)
-        print 'playing ' + songNames[curSong]
-        run(songNames[curSong],s)
-      if event.key == pygame.K_s:
-        pygame.mixer.music.stop()
-        clearQueue(s)
-      if event.key == pygame.K_p:
-        print 'playing ' + songNames[curSong]
-        run(songNames[curSong],s)
 pygame.quit()
 sys.exit()

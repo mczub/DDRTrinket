@@ -2,10 +2,10 @@ import re
 from abc import ABCMeta, abstractmethod
 from collections import defaultdict
 import sched, time
-import pygame
 import threading
 import sys
 import os
+import pygame
 import RPi.GPIO as GPIO
 from bibliopixel.led import *
 from bibliopixel.drivers.LPD8806 import *
@@ -19,7 +19,7 @@ def convertSteps(steps, bpm, bpmChanges, freezes, gap, stepIndex, holdIndex):
   notesPerMeasure = 8
   curBeat = float(0)
   secPerMeasure = 60*4/curBPM
-  curOffset = float(gap)/1000 + 0.25
+  curOffset = float(gap)/1000 + 0.28
   prevOffset = curOffset
   nextIsHold = False
   for i, c in enumerate(steps):
@@ -81,18 +81,21 @@ class Pad(object):
     return str(self.__pad)
   def Press(self):
     global strip
+    global s
     if (not self.__isHeld):
       print 'press ' + str(self.__pad)
       strip.set(self.__pad, (100,100,100))
       strip.update()
-      time.sleep(0.02)
-      strip.set(self.__pad, (0,0,0))
-      strip.update()
+      s.enter(0.02, 1, self.Release, ())
     else:
       print 'release ' + str(self.__pad)
       strip.set(self.__pad, (0,0,0))
       strip.update()
       self.__isHeld = False
+  def Release(self):
+    global strip
+    strip.set(self.__pad, (0,0,0))
+    strip.update()
   def Hold(self):
     global strip
     print 'started hold ' + str(self.__pad)
@@ -204,17 +207,20 @@ def run(name, s):
   #print changes
   #for key in sorted(stepsDict):
   #  print str(key) + ": " + ''.join(str(e.im_self) for e in stepsDict[key])
-
+  lastStepTime = 0
   for e in s.queue:
     s.cancel(e)
   
   for key in stepsDict:
+    if (key > lastStepTime):
+      lastStepTime = key
     for call in stepsDict[key]:
       s.enter(key, 1, call, ())
 
   #pygame.init()
   #pygame.display.set_mode((1,1))
   #pygame.mixer.init()
+  s.enter(lastStepTime + 1.5, 1, nextSong, (0,))
   pygame.mixer.music.load('./' + name + '.mp3')
   arrows = threading.Thread(target=s.run, args=())
   pygame.mixer.music.play()
@@ -260,6 +266,7 @@ GPIO.add_event_detect(4, GPIO.FALLING, callback=nextSong, bouncetime=500)
 driver = DriverLPD8806(4)
 strip = LEDStrip(driver)
 strip.fill((0,0,0))
+#os.environ['SDL_VIDEODRIVER'] = 'dummy'
 pygame.init()
 #pygame.display.set_mode((1,1))
 pygame.mixer.init()
@@ -267,10 +274,11 @@ pygame.mixer.music.set_endevent(END_MUSIC_EVENT)
 eventloop = True
 while eventloop:
   try:  
-    pygame.time.Clock().tick(30)
+    #pygame.time.Clock().tick(30)
     paused = False
     for event in pygame.event.get():
       if event.type == END_MUSIC_EVENT:
+        print 'Song ended!'
         nextSong(0)
     keydown = raw_input()
     keydown = keydown.lower()
